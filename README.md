@@ -7,3 +7,4 @@ An end to end CI-CD projects implemented to build, containerze, deploy the app t
 
 
 ![](https://github.com/praveensirvi1212/insurance-project/blob/main/images/Screenshot%20from%202023-05-16%2000-12-10.png)
+ A sample for branch for assignment purpose
