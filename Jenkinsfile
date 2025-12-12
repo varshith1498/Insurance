@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    tools {
+        maven 'Maven3'     
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -10,6 +14,7 @@ pipeline {
 
         stage('Build') {
             steps {
+                sh 'mvn -version'       
                 sh 'mvn clean install'
             }
         }
