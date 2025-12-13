@@ -4,7 +4,14 @@ pipeline {
     environment {
         APP_SERVER_IP = '18.217.36.36'
         APP_USER      = 'ubuntu'
+
+        // keep folder + file separate (cleaner)
+        DEPLOY_DIR    = '/home/ubuntu/app'
         DEPLOY_PATH   = '/home/ubuntu/app/app.jar'
+
+        // optional: make Trivy faster and consistent
+        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivycache"
+        TRIVY_DISABLE_VEX_NOTICE = "true"
     }
 
     options {
@@ -13,6 +20,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -21,8 +29,10 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh 'mvn -version'
-                sh 'mvn clean install'
+                sh '''
+                  mvn -version
+                  mvn clean install
+                '''
             }
         }
 
@@ -37,21 +47,35 @@ pipeline {
                 sh '''
                   echo "Running Trivy scan (REPORT ONLY - will not fail pipeline)"
                   mkdir -p reports
+                  mkdir -p "$TRIVY_CACHE_DIR"
 
-                  # Generate report (does NOT fail build)
-                  trivy fs --severity HIGH,CRITICAL --format table -o reports/trivy-report.txt . || true
+                  # report only: never fail build
+                  trivy fs \
+                    --cache-dir "$TRIVY_CACHE_DIR" \
+                    --severity HIGH,CRITICAL \
+                    --format table \
+                    -o reports/trivy-report.txt \
+                    . || true
 
                   echo "----- Trivy Report Summary -----"
                   tail -n 60 reports/trivy-report.txt || true
                 '''
-                archiveArtifacts artifacts: 'reports/trivy-report.txt', fingerprint: true
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/trivy-report.txt', fingerprint: true
+                }
             }
         }
 
         stage('Package') {
             steps {
                 sh 'mvn package'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                }
             }
         }
 
@@ -68,17 +92,26 @@ pipeline {
                       JAR_FILE=$(ls -1 target/*.jar | head -n 1)
                       echo "Artifact: $JAR_FILE"
 
+                      echo "Preparing app folder on server..."
+                      ssh -o StrictHostKeyChecking=no ${APP_USER}@${APP_SERVER_IP} "
+                        mkdir -p ${DEPLOY_DIR}
+                      "
+
                       echo "Copying artifact to app server..."
                       scp -o StrictHostKeyChecking=no "$JAR_FILE" \
                         ${APP_USER}@${APP_SERVER_IP}:${DEPLOY_PATH}
 
                       echo "Restarting application on app server..."
                       ssh -o StrictHostKeyChecking=no ${APP_USER}@${APP_SERVER_IP} "
-                        mkdir -p /home/ubuntu/app
-                        pkill -f 'java -jar' || true
-                        nohup java -jar ${DEPLOY_PATH} > /home/ubuntu/app/app.log 2>&1 &
+                        set -e
+                        # stop only this jar (safer than pkill -f 'java -jar')
+                        pkill -f '${DEPLOY_PATH}' || true
+
+                        nohup java -jar ${DEPLOY_PATH} > ${DEPLOY_DIR}/app.log 2>&1 &
+
                         sleep 2
-                        echo 'App started. Logs: /home/ubuntu/app/app.log'
+                        echo 'App started. Logs: '${DEPLOY_DIR}'/app.log'
+                        ps -ef | grep '${DEPLOY_PATH}' | grep -v grep || true
                       "
                     '''
                 }
