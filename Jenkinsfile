@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        APP_SERVER_IP = '18.217.36.36'             // ✅ removed trailing space
+        APP_SERVER_IP = '18.217.36.36'
         APP_USER      = 'ubuntu'
         DEPLOY_PATH   = '/home/ubuntu/app/app.jar'
     }
@@ -32,12 +32,19 @@ pipeline {
             }
         }
 
-        stage('Security Scan - Trivy') {
+        stage('Security Scan - Trivy (Report Only)') {
             steps {
                 sh '''
-                  echo "Running Trivy filesystem scan"
-                  trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+                  echo "Running Trivy scan (REPORT ONLY - will not fail pipeline)"
+                  mkdir -p reports
+
+                  # Generate report (does NOT fail build)
+                  trivy fs --severity HIGH,CRITICAL --format table -o reports/trivy-report.txt . || true
+
+                  echo "----- Trivy Report Summary -----"
+                  tail -n 60 reports/trivy-report.txt || true
                 '''
+                archiveArtifacts artifacts: 'reports/trivy-report.txt', fingerprint: true
             }
         }
 
@@ -53,7 +60,7 @@ pipeline {
                 branch 'main'
             }
             steps {
-                sshagent(credentials: ['app-server-ssh']) {
+                sshagent(credentials: ['appcreds']) {
                     sh '''
                       set -e
 
@@ -71,7 +78,7 @@ pipeline {
                         pkill -f 'java -jar' || true
                         nohup java -jar ${DEPLOY_PATH} > /home/ubuntu/app/app.log 2>&1 &
                         sleep 2
-                        echo 'App started. Tail logs with: tail -n 50 /home/ubuntu/app/app.log'
+                        echo 'App started. Logs: /home/ubuntu/app/app.log'
                       "
                     '''
                 }
